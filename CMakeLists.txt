@@ -6,6 +6,7 @@ include(CTest)
 
 option(LUA_BUILD_CLI "Build the standalone lua executable" ON)
 option(LUA_BUILD_INTERNAL_TESTS "Build the internal ltests module into liblua" OFF)
+option(LUA_BUILD_CPP_EXAMPLE "Build the C++/Lua mixed development example" ON)
 
 set(LUA_CORE_SOURCES
   lapi.c
@@ -102,5 +103,30 @@ if(LUA_BUILD_CLI)
 
   if(BUILD_TESTING)
     add_test(NAME lua-version COMMAND $<TARGET_FILE:lua_cli> -v)
+  endif()
+endif()
+
+if(LUA_BUILD_CPP_EXAMPLE)
+  enable_language(CXX)
+
+  configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/examples/cpp_lua_demo.lua
+    ${CMAKE_CURRENT_BINARY_DIR}/cpp_lua_demo.lua
+    COPYONLY
+  )
+
+  add_executable(cpp_lua_demo examples/cpp_lua_demo.cpp)
+
+  set_target_properties(cpp_lua_demo PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+  )
+
+  target_include_directories(cpp_lua_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(cpp_lua_demo PRIVATE lua_static)
+
+  if(BUILD_TESTING)
+    add_test(NAME cpp-lua-demo COMMAND $<TARGET_FILE:cpp_lua_demo>)
   endif()
 endif()
