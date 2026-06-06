@@ -16,3 +16,5 @@ testes/libs/all
 temp
 lua
 CMakeUserPresets.json
+.qtcreator/CMakeLists.txt.user
+CMakePresets.json
