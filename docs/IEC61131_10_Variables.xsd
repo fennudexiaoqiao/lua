@@ -1,0 +1,594 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+            xmlns:vars="urn:aiide:iec61131:variables:1"
+            targetNamespace="urn:aiide:iec61131:variables:1"
+            elementFormDefault="qualified"
+            attributeFormDefault="unqualified"
+            version="1.0">
+
+  <xsd:annotation>
+    <xsd:documentation>
+      Reusable variable and type subset extracted from IEC 61131-10.
+      This schema keeps the variable declaration model, type references,
+      user-defined type specifications, initial values, address expressions,
+      parameter groups, and the original schema's inline-type restriction
+      for TypeRef, while intentionally omitting the full Project, POU,
+      and behaviour representation model.
+
+      中文说明：
+      1. 本文件从 IEC 61131-10 中抽取出“变量定义 + 类型定义”公共子集。
+      2. 保留变量列表、变量声明、类型引用、用户自定义类型规格、初始值、地址表达式和参数集。
+      3. TypeRef 的内联定义能力与原始 schema 保持一致，仅允许可内联类型。
+      4. 不包含完整 Project、POU、行为体、图形网络等上层工程结构。
+      5. 适合被 UI 绑定、变量浏览、符号导入等场景复用。
+    </xsd:documentation>
+  </xsd:annotation>
+
+  <!-- 根元素：承载一份可独立复用的变量模型。 -->
+  <xsd:element name="VariableModel" type="vars:VariableModel"/>
+
+  <!-- 抽取自原始 schema 的抽象类型基类：用于保持类型体的继承关系。 -->
+  <xsd:complexType name="TypeSpecBase" abstract="true"/>
+
+  <!-- 可内联定义的类型基类：仅数组和引用类型继承该基类。 -->
+  <xsd:complexType name="InstantlyDefinableTypeSpecBase" abstract="true">
+    <xsd:complexContent>
+      <xsd:extension base="vars:TypeSpecBase"/>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 变量模型入口：类型定义区 + 多类变量列表。 -->
+  <xsd:complexType name="VariableModel">
+    <xsd:sequence>
+      <xsd:element name="TypeDefinitions" type="vars:TypeDefinitions" minOccurs="0"/>
+      <xsd:choice minOccurs="0" maxOccurs="unbounded">
+        <xsd:element name="GlobalVars" type="vars:VarList"/>
+        <xsd:element name="AccessVars" type="vars:VarList"/>
+        <xsd:element name="ExternalVars" type="vars:ExternalVarList"/>
+        <xsd:element name="Vars" type="vars:VarListWithAccessSpec"/>
+        <xsd:element name="TempVars" type="vars:VarList"/>
+        <xsd:element name="Parameters" type="vars:ParameterSet"/>
+      </xsd:choice>
+    </xsd:sequence>
+    <xsd:attribute name="name" type="xsd:string" use="optional"/>
+  </xsd:complexType>
+
+  <!-- 类型定义集合：收纳用户自定义类型声明。 -->
+  <xsd:complexType name="TypeDefinitions">
+    <xsd:sequence>
+      <xsd:element name="DataTypeDecl" type="vars:UserDefinedTypeDecl" minOccurs="0" maxOccurs="unbounded"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <!-- 文本容器：用于文档、说明和保留的混合内容。 -->
+  <xsd:complexType name="TextBase" mixed="true">
+    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+      <xsd:any namespace="##any" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <!-- 扩展数据容器：兼容供应商或工具链附加数据。 -->
+  <xsd:complexType name="AddData">
+    <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+      <xsd:any namespace="##any" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <!-- 已标识对象基类：提供文档、扩展数据和可选全局标识。 -->
+  <xsd:complexType name="IdentifiedObjectBase" abstract="true">
+    <xsd:sequence>
+      <xsd:element name="Documentation" type="vars:TextBase" minOccurs="0"/>
+      <xsd:element name="AddData" type="vars:AddData" minOccurs="0"/>
+    </xsd:sequence>
+    <xsd:attribute name="globalId" type="xsd:ID" use="optional"/>
+  </xsd:complexType>
+
+  <!-- 文本对象基类：在已标识对象之上补充 using 与 pragma。 -->
+  <xsd:complexType name="TextualObjectBase" abstract="true">
+    <xsd:complexContent>
+      <xsd:extension base="vars:IdentifiedObjectBase">
+        <xsd:sequence>
+          <xsd:element name="UsingDirective" type="xsd:string" minOccurs="0" maxOccurs="unbounded"/>
+        </xsd:sequence>
+        <xsd:attribute name="pragma" type="xsd:string" use="optional"/>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 命名空间内容基类：为类型等命名对象提供名称和 internal 标记。 -->
+  <xsd:complexType name="NamespaceContentBase" abstract="true">
+    <xsd:complexContent>
+      <xsd:extension base="vars:TextualObjectBase">
+        <xsd:attribute name="name" type="xsd:string" use="required"/>
+        <xsd:attribute name="internal" type="xsd:boolean" use="optional" default="false"/>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 用户自定义类型声明：类型体通过抽象基类承载，具体类型由 xsi:type 指定。 -->
+  <xsd:complexType name="UserDefinedTypeDecl">
+    <xsd:complexContent>
+      <xsd:extension base="vars:NamespaceContentBase">
+        <xsd:sequence>
+          <xsd:element name="UserDefinedTypeSpec" type="vars:TypeSpecBase"/>
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 类型引用：既可引用已命名类型，也可通过 xsi:type 直接内联可内联定义的类型体。 -->
+  <xsd:complexType name="TypeRef">
+    <xsd:choice>
+      <!-- 通过名字引用已有类型。 -->
+      <xsd:element name="TypeName" type="xsd:string"/>
+      <!-- 在当前位置直接展开可内联类型定义。 -->
+      <xsd:element name="InstantlyDefinedType" type="vars:InstantlyDefinableTypeSpecBase"/>
+    </xsd:choice>
+  </xsd:complexType>
+
+  <!-- 数组类型：包含基类型和一个或多个维度定义。 -->
+  <xsd:complexType name="ArrayTypeSpec">
+    <xsd:complexContent>
+      <xsd:extension base="vars:InstantlyDefinableTypeSpecBase">
+        <xsd:sequence>
+          <!-- 数组元素类型。 -->
+          <xsd:element name="BaseType" type="vars:TypeRef"/>
+          <!-- 每个维度单独声明下标范围或可变长度。 -->
+          <xsd:element name="DimensionSpec" maxOccurs="unbounded">
+            <xsd:complexType>
+              <xsd:choice>
+                <!-- 固定下标范围，例如 0..9。 -->
+                <xsd:element name="IndexRange">
+                  <xsd:complexType>
+                    <!-- 维度下界。 -->
+                    <xsd:attribute name="lower" type="xsd:string" use="required"/>
+                    <!-- 维度上界。 -->
+                    <xsd:attribute name="upper" type="xsd:string" use="required"/>
+                  </xsd:complexType>
+                </xsd:element>
+                <!-- 可变长度数组标记。 -->
+                <xsd:element name="VariableLength" type="xsd:boolean" fixed="true"/>
+              </xsd:choice>
+              <!-- 维度编号；本 schema 不额外强制从 1 开始或连续递增。 -->
+              <xsd:attribute name="dimensionNumber" type="xsd:unsignedInt" use="required"/>
+            </xsd:complexType>
+          </xsd:element>
+          <!-- 扩展附加数据。 -->
+          <xsd:element name="AddData" type="vars:AddData" minOccurs="0"/>
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 直接派生类型：在基类型之上附加默认初始值。 -->
+  <xsd:complexType name="DirectlyDerivedTypeSpec">
+    <xsd:complexContent>
+      <xsd:extension base="vars:TypeSpecBase">
+        <xsd:sequence>
+          <!-- 被派生的基类型。 -->
+          <xsd:element name="BaseType" type="vars:TypeRef"/>
+          <!-- 派生类型默认初始值。 -->
+          <xsd:element name="InitialValue" type="vars:Value" minOccurs="0"/>
+          <!-- 扩展附加数据。 -->
+          <xsd:element name="AddData" type="vars:AddData" minOccurs="0"/>
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 枚举类型：枚举项只定义名称。 -->
+  <xsd:complexType name="EnumTypeSpec">
+    <xsd:complexContent>
+      <xsd:extension base="vars:TypeSpecBase">
+        <xsd:sequence>
+          <!-- 枚举项列表。 -->
+          <xsd:element name="Enumerator" maxOccurs="unbounded">
+            <xsd:complexType>
+              <xsd:sequence>
+                <!-- 单个枚举项的文档说明。 -->
+                <xsd:element name="Documentation" type="vars:TextBase" minOccurs="0"/>
+              </xsd:sequence>
+              <!-- 枚举项名称。 -->
+              <xsd:attribute name="name" type="xsd:string" use="required"/>
+            </xsd:complexType>
+          </xsd:element>
+          <!-- 枚举默认初始项名称。 -->
+          <xsd:element name="InitialValue" type="xsd:string" minOccurs="0"/>
+          <!-- 扩展附加数据。 -->
+          <xsd:element name="AddData" type="vars:AddData" minOccurs="0"/>
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 带命名值的枚举类型：每个枚举项显式给出底层值。 -->
+  <xsd:complexType name="EnumTypeWithNamedValueSpec">
+    <xsd:complexContent>
+      <xsd:extension base="vars:TypeSpecBase">
+        <xsd:sequence>
+          <!-- 带值枚举项列表。 -->
+          <xsd:element name="Enumerator" maxOccurs="unbounded">
+            <xsd:complexType>
+              <xsd:sequence>
+                <!-- 单个枚举项的文档说明。 -->
+                <xsd:element name="Documentation" type="vars:TextBase" minOccurs="0"/>
+              </xsd:sequence>
+              <!-- 枚举项名称。 -->
+              <xsd:attribute name="name" type="xsd:string" use="required"/>
+              <!-- 枚举项显式底层值。 -->
+              <xsd:attribute name="value" type="xsd:string" use="required"/>
+            </xsd:complexType>
+          </xsd:element>
+          <!-- 枚举底层基础类型。 -->
+          <xsd:element name="BaseType" type="vars:ElementaryType"/>
+          <!-- 默认初始值。 -->
+          <xsd:element name="InitialValue" type="xsd:string" minOccurs="0"/>
+          <!-- 扩展附加数据。 -->
+          <xsd:element name="AddData" type="vars:AddData" minOccurs="0"/>
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 结构体类型：成员直接复用完整变量声明结构。 -->
+  <xsd:complexType name="StructTypeSpec">
+    <xsd:complexContent>
+      <xsd:extension base="vars:TypeSpecBase">
+        <xsd:sequence>
+          <!-- 结构体成员列表。 -->
+          <xsd:element name="Member" type="vars:VariableDecl" minOccurs="1" maxOccurs="unbounded"/>
+          <!-- 扩展附加数据。 -->
+          <xsd:element name="AddData" type="vars:AddData" minOccurs="0"/>
+        </xsd:sequence>
+        <!-- overlap=true 表示允许成员重叠布局。 -->
+        <xsd:attribute name="overlap" type="xsd:boolean" use="optional" default="false"/>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 子范围类型：定义上下界并绑定一个基类型。 -->
+  <xsd:complexType name="SubrangeTypeSpec">
+    <xsd:complexContent>
+      <xsd:extension base="vars:TypeSpecBase">
+        <xsd:sequence>
+          <!-- 子范围边界定义。 -->
+          <xsd:element name="Range">
+            <xsd:complexType>
+              <!-- 子范围下界。 -->
+              <xsd:attribute name="lower" type="xsd:string" use="required"/>
+              <!-- 子范围上界。 -->
+              <xsd:attribute name="upper" type="xsd:string" use="required"/>
+            </xsd:complexType>
+          </xsd:element>
+          <!-- 子范围底层类型。 -->
+          <xsd:element name="BaseType" type="vars:TypeRef"/>
+          <!-- 扩展附加数据。 -->
+          <xsd:element name="AddData" type="vars:AddData" minOccurs="0"/>
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 引用类型：表示对另一类型的引用语义。 -->
+  <xsd:complexType name="ReferenceTypeSpec">
+    <xsd:complexContent>
+      <xsd:extension base="vars:InstantlyDefinableTypeSpecBase">
+        <xsd:sequence>
+          <!-- 被引用的目标类型。 -->
+          <xsd:element name="ReferenceTo" type="vars:TypeRef"/>
+          <!-- 扩展附加数据。 -->
+          <xsd:element name="AddData" type="vars:AddData" minOccurs="0"/>
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- IEC 基本类型：保留标准基础标量以及 STRING/WSTRING 长度语法。 -->
+  <xsd:simpleType name="ElementaryType">
+    <xsd:union>
+      <xsd:simpleType>
+        <xsd:restriction base="xsd:string">
+          <!-- 布尔与位串类型。 -->
+          <xsd:enumeration value="BOOL"/>
+          <xsd:enumeration value="BYTE"/>
+          <xsd:enumeration value="WORD"/>
+          <xsd:enumeration value="DWORD"/>
+          <xsd:enumeration value="LWORD"/>
+          <!-- 有符号整数类型。 -->
+          <xsd:enumeration value="SINT"/>
+          <xsd:enumeration value="INT"/>
+          <xsd:enumeration value="DINT"/>
+          <xsd:enumeration value="LINT"/>
+          <!-- 无符号整数类型。 -->
+          <xsd:enumeration value="USINT"/>
+          <xsd:enumeration value="UINT"/>
+          <xsd:enumeration value="UDINT"/>
+          <xsd:enumeration value="ULINT"/>
+          <!-- 浮点类型。 -->
+          <xsd:enumeration value="REAL"/>
+          <xsd:enumeration value="LREAL"/>
+          <!-- 时间与日期时间相关类型。 -->
+          <xsd:enumeration value="TIME"/>
+          <xsd:enumeration value="LTIME"/>
+          <xsd:enumeration value="DT"/>
+          <xsd:enumeration value="LDT"/>
+          <xsd:enumeration value="TOD"/>
+          <xsd:enumeration value="LTOD"/>
+          <!-- 字符串与字符类型。 -->
+          <xsd:enumeration value="STRING"/>
+          <xsd:enumeration value="WSTRING"/>
+          <xsd:enumeration value="CHAR"/>
+          <xsd:enumeration value="WCHAR"/>
+        </xsd:restriction>
+      </xsd:simpleType>
+      <xsd:simpleType>
+        <xsd:restriction base="xsd:string">
+          <!-- 定长 STRING 语法，例如 STRING[80]。 -->
+          <xsd:pattern value="STRING\[[A-Za-z0-9_]+\]"/>
+        </xsd:restriction>
+      </xsd:simpleType>
+      <xsd:simpleType>
+        <xsd:restriction base="xsd:string">
+          <!-- 定长 WSTRING 语法，例如 WSTRING[80]。 -->
+          <xsd:pattern value="WSTRING\[[A-Za-z0-9_]+\]"/>
+        </xsd:restriction>
+      </xsd:simpleType>
+    </xsd:union>
+  </xsd:simpleType>
+
+  <!-- 通用变量列表：支持 constant/retain/non_retain 等块级语义。 -->
+  <xsd:complexType name="VarList">
+    <xsd:complexContent>
+      <xsd:extension base="vars:TextualObjectBase">
+        <xsd:sequence>
+          <!-- 变量项列表。 -->
+          <xsd:element name="Variable" type="vars:VariableDecl" minOccurs="0" maxOccurs="unbounded"/>
+        </xsd:sequence>
+        <!-- constant=true 表示该变量块中的变量为常量。 -->
+        <xsd:attribute name="constant" type="xsd:boolean" use="optional" default="false"/>
+        <!-- retain=true 表示变量掉电保持。 -->
+        <xsd:attribute name="retain" type="xsd:boolean" use="optional" default="false"/>
+        <!-- non_retain=true 表示变量显式非保持。 -->
+        <xsd:attribute name="non_retain" type="xsd:boolean" use="optional" default="false"/>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 外部变量列表：仅保留名称与类型，不带初始值和地址。 -->
+  <xsd:complexType name="ExternalVarList">
+    <xsd:complexContent>
+      <xsd:extension base="vars:TextualObjectBase">
+        <xsd:sequence>
+          <!-- 外部变量声明项。 -->
+          <xsd:element name="Variable" type="vars:VariableDeclPlain" minOccurs="0" maxOccurs="unbounded"/>
+        </xsd:sequence>
+        <!-- 外部变量块可整体标记为常量。 -->
+        <xsd:attribute name="constant" type="xsd:boolean" use="optional" default="false"/>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 朴素变量声明：变量名 + 类型，是最小变量定义单元。 -->
+  <xsd:complexType name="VariableDeclPlain">
+    <xsd:complexContent>
+      <xsd:extension base="vars:TextualObjectBase">
+        <xsd:sequence>
+          <!-- 变量类型。 -->
+          <xsd:element name="Type" type="vars:TypeRef"/>
+        </xsd:sequence>
+        <!-- 变量名称。 -->
+        <xsd:attribute name="name" type="xsd:string" use="required"/>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 完整变量声明：在基础变量声明上增加初始值和地址表达式。 -->
+  <xsd:complexType name="VariableDecl">
+    <xsd:complexContent>
+      <xsd:extension base="vars:VariableDeclPlain">
+        <xsd:sequence>
+          <!-- 变量初始值。 -->
+          <xsd:element name="InitialValue" type="vars:Value" minOccurs="0"/>
+          <!-- 变量地址表达式。 -->
+          <xsd:element name="Address" type="vars:AddressExpression" minOccurs="0"/>
+        </xsd:sequence>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 带访问说明的变量列表：用于 class/function block 等带可见性语义的场景。 -->
+  <xsd:complexType name="VarListWithAccessSpec">
+    <xsd:complexContent>
+      <xsd:extension base="vars:VarList">
+        <!-- 变量块可见性。 -->
+        <xsd:attribute name="accessSpecifier" type="vars:AccessSpecifiers" use="required"/>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 访问说明符：与 IEC 61131-10 中的可见性枚举保持一致。 -->
+  <xsd:simpleType name="AccessSpecifiers">
+    <xsd:restriction base="xsd:string">
+      <xsd:enumeration value="private"/>
+      <xsd:enumeration value="protected"/>
+      <xsd:enumeration value="internal"/>
+      <xsd:enumeration value="public"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+
+  <!-- 参数集：统一表达输入、输出和双向参数的声明块。 -->
+  <xsd:complexType name="ParameterSet">
+    <xsd:sequence>
+      <xsd:choice minOccurs="0" maxOccurs="unbounded">
+        <!-- 双向参数集合。 -->
+        <xsd:element name="InoutVars">
+          <xsd:complexType>
+            <xsd:sequence>
+              <!-- 双向参数项。 -->
+              <xsd:element name="Variable" minOccurs="0" maxOccurs="unbounded">
+                <xsd:complexType>
+                  <xsd:complexContent>
+                    <xsd:extension base="vars:VariableDecl">
+                      <!-- 参数在参数集中的声明顺序。 -->
+                      <xsd:attribute name="orderWithinParamSet" type="xsd:unsignedInt" use="required"/>
+                    </xsd:extension>
+                  </xsd:complexContent>
+                </xsd:complexType>
+              </xsd:element>
+            </xsd:sequence>
+          </xsd:complexType>
+        </xsd:element>
+        <!-- 输入参数集合。 -->
+        <xsd:element name="InputVars">
+          <xsd:complexType>
+            <xsd:sequence>
+              <!-- 输入参数项。 -->
+              <xsd:element name="Variable" minOccurs="0" maxOccurs="unbounded">
+                <xsd:complexType>
+                  <xsd:complexContent>
+                    <xsd:extension base="vars:VariableDecl">
+                      <!-- 参数在参数集中的声明顺序。 -->
+                      <xsd:attribute name="orderWithinParamSet" type="xsd:unsignedInt" use="required"/>
+                      <!-- 上升沿/下降沿修饰。 -->
+                      <xsd:attribute name="edgeDetection" type="vars:EdgeModifierType" use="optional" default="none"/>
+                    </xsd:extension>
+                  </xsd:complexContent>
+                </xsd:complexType>
+              </xsd:element>
+            </xsd:sequence>
+            <!-- 输入参数块保持属性。 -->
+            <xsd:attribute name="retain" type="xsd:boolean" use="optional" default="false"/>
+            <!-- 输入参数块显式非保持属性。 -->
+            <xsd:attribute name="non_retain" type="xsd:boolean" use="optional" default="false"/>
+          </xsd:complexType>
+        </xsd:element>
+        <!-- 输出参数集合。 -->
+        <xsd:element name="OutputVars">
+          <xsd:complexType>
+            <xsd:sequence>
+              <!-- 输出参数项。 -->
+              <xsd:element name="Variable" minOccurs="0" maxOccurs="unbounded">
+                <xsd:complexType>
+                  <xsd:complexContent>
+                    <xsd:extension base="vars:VariableDecl">
+                      <!-- 参数在参数集中的声明顺序。 -->
+                      <xsd:attribute name="orderWithinParamSet" type="xsd:unsignedInt" use="required"/>
+                    </xsd:extension>
+                  </xsd:complexContent>
+                </xsd:complexType>
+              </xsd:element>
+            </xsd:sequence>
+            <!-- 输出参数块保持属性。 -->
+            <xsd:attribute name="retain" type="xsd:boolean" use="optional" default="false"/>
+            <!-- 输出参数块显式非保持属性。 -->
+            <xsd:attribute name="non_retain" type="xsd:boolean" use="optional" default="false"/>
+          </xsd:complexType>
+        </xsd:element>
+      </xsd:choice>
+    </xsd:sequence>
+  </xsd:complexType>
+
+  <!-- 输入边沿修饰：仅适用于输入参数。 -->
+  <xsd:simpleType name="EdgeModifierType">
+    <xsd:restriction base="xsd:string">
+      <!-- 无边沿修饰。 -->
+      <xsd:enumeration value="none"/>
+      <!-- 上升沿。 -->
+      <xsd:enumeration value="rising"/>
+      <!-- 下降沿。 -->
+      <xsd:enumeration value="falling"/>
+    </xsd:restriction>
+  </xsd:simpleType>
+
+  <!-- 初始值模型：支持简单值、数组值和结构体值。 -->
+  <xsd:complexType name="Value">
+    <xsd:choice>
+      <!-- 单个标量或字面字符串值。 -->
+      <xsd:element name="SimpleValue">
+        <xsd:complexType>
+          <!-- 值文本。 -->
+          <xsd:attribute name="value" type="xsd:string" use="optional"/>
+        </xsd:complexType>
+      </xsd:element>
+      <!-- 数组值：由一组 Value 子项组成。 -->
+      <xsd:element name="ArrayValue">
+        <xsd:complexType>
+          <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+            <!-- 单个数组元素值。 -->
+            <xsd:element name="Value">
+              <xsd:complexType>
+                <xsd:complexContent>
+                  <xsd:extension base="vars:Value">
+                    <!-- 重复次数文本；语义上通常用于压缩连续重复值。 -->
+                    <xsd:attribute name="repetitionValue" type="xsd:string" use="optional" default="1"/>
+                  </xsd:extension>
+                </xsd:complexContent>
+              </xsd:complexType>
+            </xsd:element>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+      <!-- 结构体值：按成员名逐项给值。 -->
+      <xsd:element name="StructValue">
+        <xsd:complexType>
+          <xsd:sequence minOccurs="0" maxOccurs="unbounded">
+            <!-- 单个成员值。 -->
+            <xsd:element name="Value">
+              <xsd:complexType>
+                <xsd:complexContent>
+                  <xsd:extension base="vars:Value">
+                    <!-- 结构体成员名。 -->
+                    <xsd:attribute name="member" type="xsd:string" use="required"/>
+                  </xsd:extension>
+                </xsd:complexContent>
+              </xsd:complexType>
+            </xsd:element>
+          </xsd:sequence>
+        </xsd:complexType>
+      </xsd:element>
+    </xsd:choice>
+  </xsd:complexType>
+
+  <!-- 固定地址表达式：覆盖 I/Q/M 区域和 X/B/W/D/L 粒度。 -->
+  <xsd:complexType name="FixedAddressExpression">
+    <xsd:complexContent>
+      <xsd:extension base="vars:TextualObjectBase">
+        <!-- I=输入区，Q=输出区，M=存储区。 -->
+        <xsd:attribute name="location" use="optional">
+          <xsd:simpleType>
+            <xsd:restriction base="xsd:NMTOKEN">
+              <xsd:enumeration value="I"/>
+              <xsd:enumeration value="Q"/>
+              <xsd:enumeration value="M"/>
+            </xsd:restriction>
+          </xsd:simpleType>
+        </xsd:attribute>
+        <!-- X/B/W/D/L 对应位、字节、字、双字、长字粒度。 -->
+        <xsd:attribute name="size" use="optional">
+          <xsd:simpleType>
+            <xsd:restriction base="xsd:NMTOKEN">
+              <xsd:enumeration value="X"/>
+              <xsd:enumeration value="B"/>
+              <xsd:enumeration value="W"/>
+              <xsd:enumeration value="D"/>
+              <xsd:enumeration value="L"/>
+            </xsd:restriction>
+          </xsd:simpleType>
+        </xsd:attribute>
+        <!-- 实际地址文本，例如 0.0、100、200.1。 -->
+        <xsd:attribute name="address" type="xsd:string" use="optional"/>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+  <!-- 地址表达式：在固定地址的基础上增加“尚未最终分配”标记。 -->
+  <xsd:complexType name="AddressExpression">
+    <xsd:complexContent>
+      <xsd:extension base="vars:FixedAddressExpression">
+        <!-- true 表示地址还未固化，后续可由编译/部署阶段分配。 -->
+        <xsd:attribute name="notYetFixed" type="xsd:boolean" use="optional" default="false"/>
+      </xsd:extension>
+    </xsd:complexContent>
+  </xsd:complexType>
+
+</xsd:schema>

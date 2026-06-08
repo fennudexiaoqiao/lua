@@ -7,6 +7,7 @@ include(CTest)
 option(LUA_BUILD_CLI "Build the standalone lua executable" ON)
 option(LUA_BUILD_INTERNAL_TESTS "Build the internal ltests module into liblua" OFF)
 option(LUA_BUILD_CPP_EXAMPLE "Build the C++/Lua mixed development example" ON)
+option(LUA_BUILD_BINDING "Enable LBS binding extensions (bind/var/<-/<=>)" ON)
 
 set(LUA_CORE_SOURCES
   lapi.c
@@ -33,6 +34,10 @@ set(LUA_CORE_SOURCES
 
 if(LUA_BUILD_INTERNAL_TESTS)
   list(APPEND LUA_CORE_SOURCES ltests.c)
+endif()
+
+if(LUA_BUILD_BINDING)
+  list(APPEND LUA_CORE_SOURCES lbind.c)
 endif()
 
 set(LUA_LIB_SOURCES
@@ -73,6 +78,10 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(lua_static PUBLIC LUA_USE_LINUX)
 elseif(APPLE)
   target_compile_definitions(lua_static PUBLIC LUA_USE_MACOSX)
+endif()
+
+if(LUA_BUILD_BINDING)
+  target_compile_definitions(lua_static PUBLIC LUA_USE_BINDING)
 endif()
 
 if(MSVC)
@@ -128,5 +137,30 @@ if(LUA_BUILD_CPP_EXAMPLE)
 
   if(BUILD_TESTING)
     add_test(NAME cpp-lua-demo COMMAND $<TARGET_FILE:cpp_lua_demo>)
+  endif()
+
+  # ---- C++/Lua binding demo ----
+  configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/examples/cpp_lua_binding_demo/demo.lua
+    ${CMAKE_CURRENT_BINARY_DIR}/demo.lua
+    COPYONLY
+  )
+
+  add_executable(binding_demo
+    examples/cpp_lua_binding_demo/binding_demo.cpp
+    examples/cpp_lua_binding_demo/binding_host.cpp
+  )
+
+  set_target_properties(binding_demo PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+  )
+
+  target_include_directories(binding_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(binding_demo PRIVATE lua_static)
+
+  if(BUILD_TESTING)
+    add_test(NAME binding-demo COMMAND $<TARGET_FILE:binding_demo>)
   endif()
 endif()

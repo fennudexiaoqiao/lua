@@ -10,6 +10,9 @@
 #include "llimits.h"
 #include "lobject.h"
 #include "lzio.h"
+#if defined(LUA_USE_BINDING)
+#include "lbind.h"
+#endif
 
 
 /*
@@ -183,6 +186,9 @@ typedef struct FuncState {
   lu_byte freereg;  /* first free register */
   lu_byte iwthabs;  /* instructions issued since last absolute line info */
   lu_byte needclose;  /* function needs to close upvalues when returning */
+#if defined(LUA_USE_BINDING)
+  LBS_CompileMetadata *lbs_meta;  /* LBS binding metadata (NULL if none) */
+#endif
 } FuncState;
 
 

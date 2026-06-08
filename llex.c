@@ -47,8 +47,14 @@ static const char *const luaX_tokens [] = {
     "end", "false", "for", "function", "global", "goto", "if",
     "in", "local", "nil", "not", "or", "repeat",
     "return", "then", "true", "until", "while",
+#if defined(LUA_USE_BINDING)
+    "bind", "var",
+#endif
     "//", "..", "...", "==", ">=", "<=", "~=",
     "<<", ">>", "::", "<eof>",
+#if defined(LUA_USE_BINDING)
+    "<-", "<=>",
+#endif
     "<number>", "<integer>", "<name>", "<string>"
 };
 
@@ -512,8 +518,21 @@ static int llex (LexState *ls, SemInfo *seminfo) {
       }
       case '<': {
         next(ls);
-        if (check_next1(ls, '=')) return TK_LE;  /* '<=' */
+        if (check_next1(ls, '=')) {  /* '<=' or '<=>' */
+#if defined(LUA_USE_BINDING)
+          if (check_next1(ls, '>')) return TK_DOUBLEARROW;  /* '<=>' */
+          else return TK_LE;  /* '<=' */
+#else
+          return TK_LE;  /* '<=' */
+#endif
+        }
         else if (check_next1(ls, '<')) return TK_SHL;  /* '<<' */
+#if defined(LUA_USE_BINDING)
+        else if (ls->current == '-') {  /* '<-' (binding arrow) */
+          next(ls);
+          return TK_ARROW;
+        }
+#endif
         else return '<';
       }
       case '>': {

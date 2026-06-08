@@ -63,6 +63,10 @@ typedef struct BlockCnt {
 */
 static void statement (LexState *ls);
 static void expr (LexState *ls, expdesc *v);
+#if defined(LUA_USE_BINDING)
+static void bindstat (LexState *ls, int line);
+static void varbindstat (LexState *ls, int line);
+#endif
 
 
 static l_noret error_expected (LexState *ls, int token) {
@@ -817,6 +821,9 @@ static void open_func (LexState *ls, FuncState *fs, BlockCnt *bl) {
   fs->firstlocal = ls->dyd->actvar.n;
   fs->firstlabel = ls->dyd->label.n;
   fs->bl = NULL;
+#if defined(LUA_USE_BINDING)
+  fs->lbs_meta = NULL;  /* no LBS bindings yet */
+#endif
   f->source = ls->source;
   luaC_objbarrier(L, f, f->source);
   f->maxstacksize = 2;  /* registers 0/1 are always valid */
@@ -2046,6 +2053,261 @@ static void retstat (LexState *ls) {
 }
 
 
+#if defined(LUA_USE_BINDING)
+
+/*
+** =======================================================
+** LBS (Lua Binding Superset) — binding statement parsing
+** =======================================================
+*/
+
+
+/*
+** IEC 61131-10 elementary types.
+** Matches the ElementaryType union in IEC61131_10_Variables.xsd.
+*/
+static const char *const iec_elementary_types[] = {
+  "BOOL", "BYTE", "WORD", "DWORD", "LWORD",
+  "SINT", "INT", "DINT", "LINT",
+  "USINT", "UINT", "UDINT", "ULINT",
+  "REAL", "LREAL",
+  "DATE", "LDATE",
+  "TIME", "LTIME", "DT", "LDT", "TOD", "LTOD",
+  "STRING", "WSTRING", "CHAR", "WCHAR",
+  NULL
+};
+
+
+static int iec_is_elementary_type (const char *name) {
+  const char *const *p;
+  for (p = iec_elementary_types; *p != NULL; p++) {
+    if (strcmp(name, *p) == 0)
+      return 1;
+  }
+  return 0;
+}
+
+
+/*
+** Check whether the current token is a NAME whose string equals 'kw'.
+** Context keywords: mode, twoway, oneway, converter, trigger, debounce.
+*/
+static int check_context_keyword (LexState *ls, const char *kw) {
+  if (ls->t.token == TK_NAME) {
+    const char *s = getstr(ls->t.seminfo.ts);
+    return strcmp(s, kw) == 0;
+  }
+  return 0;
+}
+
+
+/*
+** Parse a binding target path:  ui.xxx.yyy  /  state.xxx  /  extern.xxx  /  vm.xxx
+** Consumes tokens and returns a heap-allocated LBS_BindPath.
+*/
+static LBS_BindPath *bindpath (LexState *ls) {
+  LBS_BindPath *p;
+  const char *root;
+  /* root must be one of ui / state / extern / vm */
+  check(ls, TK_NAME);
+  root = getstr(ls->t.seminfo.ts);
+  if (strcmp(root, "ui") != 0 &&
+      strcmp(root, "state") != 0 &&
+      strcmp(root, "extern") != 0 &&
+      strcmp(root, "vm") != 0) {
+    luaX_syntaxerror(ls,
+        "binding path must start with ui, state, extern, or vm");
+  }
+  p = lbsM_newpath(ls->L);
+  p->root = lbsM_root_from_string(root);
+  luaX_next(ls);  /* consume root */
+  /* consume '.field' chain */
+  while (ls->t.token == '.') {
+    luaX_next(ls);  /* skip '.' */
+    lbsM_path_addseg(ls->L, p, str_checkname(ls));
+  }
+  return p;
+}
+
+
+/*
+** Parse a binding arrow:  '<-'  (one-way)  or  '<=>'  (two-way).
+** Returns LBS_ONEWAY or LBS_TWOWAY.
+*/
+static LBS_BindDir bindarrow (LexState *ls) {
+  if (ls->t.token == TK_ARROW) {  /* '<-' */
+    luaX_next(ls);
+    return LBS_ONEWAY;
+  }
+  else if (ls->t.token == TK_DOUBLEARROW) {  /* '<=>' */
+    luaX_next(ls);
+    return LBS_TWOWAY;
+  }
+  else {
+    luaX_syntaxerror(ls, luaO_pushfstring(ls->L,
+                         "'<-' or '<=>' expected"));
+    return LBS_ONEWAY;  /* unreachable */
+  }
+}
+
+
+/*
+** Parse optional binding clause tail parameters.
+** Populates the given LBS_BindDecl with converter/trigger/debounce info.
+*/
+static void bindoptional (LexState *ls, LBS_BindDecl *b) {
+  for (;;) {
+    if (check_context_keyword(ls, "converter")) {
+      luaX_next(ls);  /* skip 'converter' */
+      b->converter = ls->t.seminfo.ts;
+      str_checkname(ls);  /* consume converter name */
+    }
+    else if (check_context_keyword(ls, "trigger")) {
+      luaX_next(ls);  /* skip 'trigger' */
+      b->trigger = ls->t.seminfo.ts;
+      if (ls->t.token == TK_NAME)
+        luaX_next(ls);
+      else
+        luaX_syntaxerror(ls, "trigger name expected");
+    }
+    else if (check_context_keyword(ls, "debounce")) {
+      luaX_next(ls);  /* skip 'debounce' */
+      if (ls->t.token == TK_INT)
+        b->debounce_value = (int)ls->t.seminfo.i;
+      luaX_next(ls);  /* consume number */
+      if (ls->t.token == TK_NAME) {
+        b->debounce_unit = ls->t.seminfo.ts;
+        luaX_next(ls);  /* consume unit */
+      }
+    }
+    else {
+      break;
+    }
+  }
+}
+
+
+/*
+** Parse  bind target <- expr  or  bind target <=> source [optional...]
+**
+** Generates an LBS_BindDecl and adds it to fs->lbs_meta.
+*/
+static void bindstat (LexState *ls, int line) {
+  FuncState *fs = ls->fs;
+  LBS_BindDecl *b;
+  expdesc source_expr;
+  luaX_next(ls);  /* skip 'bind' */
+  b = lbsM_newbinddecl(ls->L);
+  b->line = line;
+  /* parse left-side target */
+  b->target = bindpath(ls);
+  /* parse arrow: '<-' or '<=>' */
+  b->dir = bindarrow(ls);
+  /* parse right-side expression (B2: capture source text in B3) */
+  expr(ls, &source_expr);
+  (void)source_expr;
+  /* parse optional parameters */
+  bindoptional(ls, b);
+  /* add to metadata (allocate metadata if first binding in this function) */
+  if (fs->lbs_meta == NULL)
+    fs->lbs_meta = lbsM_newmetadata(ls->L);
+  lbsM_addbinding(ls->L, fs->lbs_meta, b);
+}
+
+
+/*
+** Parse  var name: Type bind source [mode twoway|oneway]   or
+**        var name: Type <- expr
+**
+** Generates an LBS_BindVarDecl or LBS_DerivedVarDecl, adds it to
+** fs->lbs_meta, and creates a Lua local variable as a proxy.
+*/
+static void varbindstat (LexState *ls, int line) {
+  FuncState *fs = ls->fs;
+  TString *varname;
+  TString *typename;
+  luaX_next(ls);  /* skip 'var' */
+  /* variable name */
+  check(ls, TK_NAME);
+  varname = ls->t.seminfo.ts;
+  luaX_next(ls);  /* consume name */
+  /* type annotation: ': Type' — must be IEC 61131-10 elementary type */
+  if (!testnext(ls, ':'))
+    luaX_syntaxerror(ls, "':' expected after variable name");
+  if (ls->t.token != TK_NAME)
+    luaX_syntaxerror(ls, "type name expected after ':'");
+  {
+    const char *tname = getstr(ls->t.seminfo.ts);
+    if (!iec_is_elementary_type(tname))
+      luaX_syntaxerror(ls,
+          luaO_pushfstring(ls->L,
+              "IEC 61131-10 type expected, got '%s'", tname));
+    typename = ls->t.seminfo.ts;
+  }
+  luaX_next(ls);  /* consume type name */
+  /* ensure metadata container exists */
+  if (fs->lbs_meta == NULL)
+    fs->lbs_meta = lbsM_newmetadata(ls->L);
+  /* branch on 'bind' vs '<-' */
+  if (ls->t.token == TK_BIND) {  /* var name: Type bind source [mode ...] */
+    LBS_BindVarDecl *v;
+    luaX_next(ls);  /* skip 'bind' */
+    v = lbsM_newbindvar(ls->L);
+    v->name = varname;
+    v->type_name = typename;
+    v->line = line;
+    v->source = bindpath(ls);
+    /* optional mode twoway|oneway */
+    if (check_context_keyword(ls, "mode")) {
+      luaX_next(ls);  /* skip 'mode' */
+      if (check_context_keyword(ls, "twoway")) {
+        v->mode = LBS_MODE_TWOWAY;
+        luaX_next(ls);
+      }
+      else if (check_context_keyword(ls, "oneway")) {
+        v->mode = LBS_MODE_ONEWAY;
+        luaX_next(ls);
+      }
+      else
+        luaX_syntaxerror(ls, "'twoway' or 'oneway' expected after 'mode'");
+    }
+    /* optional parameters (converter/trigger/debounce on the BindVarDecl) */
+    {
+      LBS_BindDecl tmp;
+      tmp.converter = NULL; tmp.trigger = NULL;
+      tmp.debounce_value = 0; tmp.debounce_unit = NULL;
+      bindoptional(ls, &tmp);
+      v->converter = tmp.converter;
+      v->trigger = tmp.trigger;
+      v->debounce_value = tmp.debounce_value;
+      v->debounce_unit = tmp.debounce_unit;
+    }
+    lbsM_addbindvar(ls->L, fs->lbs_meta, v);
+  }
+  else if (ls->t.token == TK_ARROW) {  /* var name: Type <- expr */
+    LBS_DerivedVarDecl *d;
+    luaX_next(ls);  /* skip '<-' */
+    d = lbsM_newderivedvar(ls->L);
+    d->name = varname;
+    d->type_name = typename;
+    d->line = line;
+    /* capture derivation expression as dummy for now (B3: real source text) */
+    d->expr_text = luaS_newliteral(ls->L, "(derived expression)");
+    /* consume the expression */
+    { expdesc e; expr(ls, &e); (void)e; }
+    lbsM_addderivedvar(ls->L, fs->lbs_meta, d);
+  }
+  else {
+    luaX_syntaxerror(ls, "'bind' or '<-' expected after type");
+  }
+  /* create Lua local variable as proxy (so Lua code can reference it) */
+  new_localvar(ls, varname);
+  adjustlocalvars(ls, 1);
+}
+
+#endif  /* LUA_USE_BINDING */
+
+
 static void statement (LexState *ls) {
   int line = ls->linenumber;  /* may be needed for error messages */
   enterlevel(ls);
@@ -2092,6 +2354,16 @@ static void statement (LexState *ls) {
       globalstatfunc(ls, line);
       break;
     }
+#if defined(LUA_USE_BINDING)
+    case TK_BIND: {  /* stat -> bindstat (LBS) */
+      bindstat(ls, line);
+      break;
+    }
+    case TK_VAR: {  /* stat -> varbindstat (LBS) */
+      varbindstat(ls, line);
+      break;
+    }
+#endif
     case TK_DBCOLON: {  /* stat -> label */
       luaX_next(ls);  /* skip double colon */
       labelstat(ls, str_checkname(ls), line);
