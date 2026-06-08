@@ -2206,8 +2206,18 @@ static void bindstat (LexState *ls, int line) {
   /* parse right-side expression (B2: capture source text in B3) */
   expr(ls, &source_expr);
   (void)source_expr;
-  /* parse optional parameters */
+  /* parse optional parameters (converter, trigger, debounce) */
   bindoptional(ls, b);
+  /* parse optional 'when' condition guard */
+  if (check_context_keyword(ls, "when")) {
+    luaX_next(ls);  /* skip 'when' */
+    b->condition = bindpath(ls);  /* guard path */
+  }
+  /* parse optional 'once' modifier */
+  if (check_context_keyword(ls, "once")) {
+    luaX_next(ls);  /* skip 'once' */
+    b->onetime = 1;
+  }
   /* add to metadata (allocate metadata if first binding in this function) */
   if (fs->lbs_meta == NULL)
     fs->lbs_meta = lbsM_newmetadata(ls->L);

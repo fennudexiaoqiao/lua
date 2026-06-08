@@ -65,6 +65,8 @@ typedef struct LBS_BindDecl {
   TString *trigger;        /* trigger name, or NULL */
   int debounce_value;      /* debounce numeric value, or 0 */
   TString *debounce_unit;  /* unit string ("ms", "s"), or NULL */
+  LBS_BindPath *condition; /* guard path for conditional binding, or NULL */
+  int onetime;             /* true for one-shot binding (evaluate once, no listener) */
   int line;                /* source line number */
   struct LBS_BindDecl *next;   /* linked list */
 } LBS_BindDecl;

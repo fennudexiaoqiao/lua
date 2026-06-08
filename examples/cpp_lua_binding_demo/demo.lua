@@ -77,3 +77,59 @@ print(string.format("After PLC start: running=%s, led=%s",
 cpp_set("extern.plc.motor.running", false)
 print(string.format("After PLC stop:  running=%s, led=%s",
       tostring(extern.plc.motor.running), tostring(ui.statusLed.on)))
+
+-- ============================================================
+-- 7. CONDITIONAL BINDING:  source → target only when guard is truthy
+-- ============================================================
+print("\n=== Conditional Binding Demo ===")
+
+-- Reset temp label to a safe default
+cpp_set("ui.tempLabel.text", "25.0 °C")
+
+-- Conditional: tempLabel only updates when motor is running
+lbs_bind_if("ui.tempLabel.text", "extern.plc.motor.temp", "extern.plc.motor.running")
+
+print("--- Motor STOPPED: temp changes should NOT propagate ---")
+cpp_set("extern.plc.motor.temp", 80.5)
+cpp_print("extern.plc.motor.temp")
+cpp_print("ui.tempLabel.text")
+print(string.format("  => label unchanged: '%s' (correct — motor not running)", ui.tempLabel.text))
+
+print("\n--- Motor STARTED: temp changes SHOULD propagate ---")
+cpp_set("extern.plc.motor.running", true)
+cpp_print("extern.plc.motor.temp")
+cpp_print("ui.tempLabel.text")
+print(string.format("  => label updated: '%s' (correct — motor is running)", ui.tempLabel.text))
+
+print("\n--- Motor RUNNING: further temp changes propagate ---")
+cpp_set("extern.plc.motor.temp", 92.3)
+cpp_print("extern.plc.motor.temp")
+cpp_print("ui.tempLabel.text")
+
+print("\n--- Motor STOPPED again: temp changes blocked ---")
+cpp_set("extern.plc.motor.running", false)
+cpp_set("extern.plc.motor.temp", 45.0)
+cpp_print("extern.plc.motor.temp")
+cpp_print("ui.tempLabel.text")
+print(string.format("  => label frozen at last running value: '%s' (correct)", ui.tempLabel.text))
+
+-- ============================================================
+-- 8. ONCE BINDING (Vue v-once):  evaluate once, never update
+-- ============================================================
+print("\n=== Once Binding Demo (Vue v-once) ===")
+
+-- Capture the current motor speed as an immutable "boot snapshot"
+lbs_bind_once("ui.initValue.text", "extern.plc.motor.speed")
+cpp_print("ui.initValue.text")
+print(string.format("  => snapshot: '%s' (captured at bind time)", ui.initValue.text))
+
+print("\n--- Speed changes: once binding should NOT update ---")
+cpp_set("extern.plc.motor.speed", 88)
+cpp_print("extern.plc.motor.speed")
+cpp_print("ui.initValue.text")
+print(string.format("  => snapshot unchanged: '%s' (correct — one-shot)", ui.initValue.text))
+
+cpp_set("extern.plc.motor.speed", 12)
+cpp_print("extern.plc.motor.speed")
+cpp_print("ui.initValue.text")
+print(string.format("  => snapshot still unchanged: '%s' (correct)", ui.initValue.text))

@@ -83,6 +83,91 @@ static int l_bind2way(lua_State *L) {
 
 
 /*
+** Check whether an IecValue is "truthy".
+**   BOOL: true, INT/REAL: != 0, STRING: non-empty.
+*/
+static bool iec_truthy(const IecValue &v) {
+  return std::visit([](auto &&val) -> bool {
+    using T = std::decay_t<decltype(val)>;
+    if constexpr (std::is_same_v<T, bool>)
+      return val;
+    else if constexpr (std::is_same_v<T, std::string>)
+      return !val.empty();
+    else
+      return val != 0;  /* numeric types */
+  }, v);
+}
+
+
+/*
+** lbs_bind_if(target_path, source_path, condition_path)
+**   Conditional one-way binding: source → target only when condition is truthy.
+**   Listens to both source and condition changes.
+*/
+static int l_bind_if(lua_State *L) {
+  const char *target    = luaL_checkstring(L, 1);
+  const char *source    = luaL_checkstring(L, 2);
+  const char *condition = luaL_checkstring(L, 3);
+
+  lua_pushstring(L, "lua_binding_host_ptr");
+  lua_rawget(L, LUA_REGISTRYINDEX);
+  auto *host = static_cast<BindingHost *>(
+      const_cast<void *>(lua_topointer(L, -1)));
+  lua_pop(L, 1);
+
+  /* Listener on source: when source changes and condition is truthy → sync */
+  host->add_listener(source,
+    [host, target = std::string(target),
+     src = std::string(source),
+     cond = std::string(condition)](const IecValue & /*srcVal*/) {
+      if (iec_truthy(host->get(cond)))
+        host->set(target, host->get(src), /*notify=*/true);
+    });
+
+  /* Listener on condition: when condition becomes truthy → sync source→target */
+  host->add_listener(condition,
+    [host, target = std::string(target),
+     src = std::string(source),
+     cond = std::string(condition)](const IecValue & /*condVal*/) {
+      if (iec_truthy(host->get(cond)))
+        host->set(target, host->get(src), /*notify=*/true);
+    });
+
+  /* Initial sync if condition is already truthy */
+  if (iec_truthy(host->get(condition)))
+    host->set(target, host->get(source), /*notify=*/true);
+
+  std::cout << "[bind_if] " << target << " <- " << source
+            << "  when " << condition << "\n";
+  return 0;
+}
+
+
+/*
+** lbs_bind_once(target_path, source_path)
+**   One-shot binding (Vue v-once): evaluates once, then never updates.
+**   No listener is registered — target permanently holds the initial snapshot.
+*/
+static int l_bind_once(lua_State *L) {
+  const char *target = luaL_checkstring(L, 1);
+  const char *source = luaL_checkstring(L, 2);
+
+  lua_pushstring(L, "lua_binding_host_ptr");
+  lua_rawget(L, LUA_REGISTRYINDEX);
+  auto *host = static_cast<BindingHost *>(
+      const_cast<void *>(lua_topointer(L, -1)));
+  lua_pop(L, 1);
+
+  /* One-shot: copy source → target once, no listener */
+  host->set(target, host->get(source), /*notify=*/true);
+
+  std::cout << "[bind_once] " << target << " <- " << source
+            << "  (one-shot, no listener)\n";
+  return 0;
+}
+
+
+/*
 ** cpp_set(path, value)
 **   Simulate external (PLC) writes from C++ side.
 */
@@ -169,6 +254,7 @@ int main(int argc, char **argv) {
   host.add_property("ui.speedLabel.text",   IecType::STRING, std::string("0 rpm"));
   host.add_property("ui.tempLabel.text",    IecType::STRING, std::string("25.0 °C"));
   host.add_property("ui.statusLed.on",      IecType::BOOL,   false);
+  host.add_property("ui.initValue.text",     IecType::STRING, std::string("--"));
 
   host.add_property("state.pageName",       IecType::STRING, std::string("MotorPanel"));
 
@@ -185,7 +271,9 @@ int main(int argc, char **argv) {
   /* register binding functions */
   lua_register(L, "lbs_bind",     l_bind);
   lua_register(L, "lbs_bind2way", l_bind2way);
-  lua_register(L, "cpp_set",      l_cpp_set);
+  lua_register(L, "lbs_bind_if",   l_bind_if);
+  lua_register(L, "lbs_bind_once", l_bind_once);
+  lua_register(L, "cpp_set",       l_cpp_set);
   lua_register(L, "cpp_print",    l_cpp_print);
 
   /* ---- load and run Lua script ---- */

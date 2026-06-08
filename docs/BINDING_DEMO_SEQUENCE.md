@@ -142,7 +142,123 @@ sequenceDiagram
     Note over Host: statusLed.on: true → false
 ```
 
-## 7. 整体依赖图
+## 7. 条件绑定（lbs_bind_if）— 仅当 guard 为真时生效
+
+```mermaid
+sequenceDiagram
+    participant Script as demo.lua
+    participant C as l_bind_if()
+    participant Host as BindingHost
+
+    Script->>C: lbs_bind_if("ui.tempLabel.text", "extern.plc.motor.temp", "extern.plc.motor.running")
+    C->>Host: add_listener("extern.plc.motor.temp", callback_src)
+    Note over Host: callback_src: if running → set(tempLabel, temp)
+    C->>Host: add_listener("extern.plc.motor.running", callback_cond)
+    Note over Host: callback_cond: if running → set(tempLabel, temp)
+    C->>Host: get("extern.plc.motor.running") → false
+    Note over C: 初始条件为 false, 不同步
+    C-->>Script: [bind_if] tempLabel <- temp when running
+
+    Note over Script: --- Motor STOPPED: temp 变化被阻断 ---
+    Script->>Host: cpp_set("extern.plc.motor.temp", 80.5)
+    Host->>Host: temp: 25.0 → 80.5, 通知 listener
+    Host->>Host: callback_src: iec_truthy(running) → false → 跳过
+    Note over Host: tempLabel 不变
+
+    Note over Script: --- Motor STARTED: 立即同步 ---
+    Script->>Host: cpp_set("extern.plc.motor.running", true)
+    Host->>Host: running: false → true, 通知 listener
+    Host->>Host: callback_cond: iec_truthy(running) → true
+    Host->>Host: set("ui.tempLabel.text", get("extern.plc.motor.temp"))
+    Note over Host: tempLabel = 80.5
+
+    Note over Script: --- Motor RUNNING: temp 变化正常传播 ---
+    Script->>Host: cpp_set("extern.plc.motor.temp", 92.3)
+    Host->>Host: temp: 80.5 → 92.3, 通知 listener
+    Host->>Host: callback_src: iec_truthy(running) → true
+    Host->>Host: set("ui.tempLabel.text", 92.3)
+
+    Note over Script: --- Motor STOPPED: temp 变化再次阻断 ---
+    Script->>Host: cpp_set("extern.plc.motor.running", false)
+    Host->>Host: running: true → false, 通知 listener
+    Host->>Host: callback_cond: iec_truthy(running) → false → 跳过
+    Script->>Host: cpp_set("extern.plc.motor.temp", 45.0)
+    Host->>Host: callback_src: iec_truthy(running) → false → 跳过
+    Note over Host: tempLabel 保持 92.3 (最后有效值)
+```
+
+## 8. LBS 语法中的条件绑定
+
+```lua
+-- 条件单向绑定 (LBS 扩展语法)
+bind ui.tempLabel.text <- extern.plc.motor.temp when extern.plc.motor.running
+
+-- 等价 Demo API
+lbs_bind_if("ui.tempLabel.text", "extern.plc.motor.temp", "extern.plc.motor.running")
+```
+
+`LBS_BindDecl` 新增字段:
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `condition` | `LBS_BindPath *` | 守卫路径，NULL 表示无条件 |
+
+## 9. Once 绑定（lbs_bind_once）— Vue v-once 语义
+
+```mermaid
+sequenceDiagram
+    participant Script as demo.lua
+    participant C as l_bind_once()
+    participant Host as BindingHost
+
+    Script->>C: lbs_bind_once("ui.initValue.text", "extern.plc.motor.speed")
+    C->>Host: get("extern.plc.motor.speed") → 45
+    C->>Host: set("ui.initValue.text", 45, notify=true)
+    Note over Host: initValue = 45 (snapshot taken)
+    Note over C: ⚠ No listener registered
+    C-->>Script: [bind_once] initValue <- speed (one-shot)
+
+    Note over Script: --- Speed changes: once binding ignores ---
+    Script->>Host: cpp_set("extern.plc.motor.speed", 88)
+    Host->>Host: speed: 45 → 88, 通知 listeners
+    Note over Host: initValue 没有 listener → 不响应
+    Note over Host: initValue 保持 45
+
+    Script->>Host: cpp_set("extern.plc.motor.speed", 12)
+    Note over Host: initValue 仍保持 45
+```
+
+## 10. 四种绑定模式对比
+
+| 模式 | LBS 语法 | Demo API | 更新时机 |
+|------|---------|----------|---------|
+| 单向 | `bind A <- B` | `lbs_bind` | B 每次变化 → A |
+| 双向 | `bind A <=> B` | `lbs_bind2way` | 任一侧变化 → 另一侧 |
+| 条件 | `bind A <- B when C` | `lbs_bind_if` | B 变化 + C 为真 → A |
+| 一次 | `bind A <- B once` | `lbs_bind_once` | **仅绑定时一次** → A |
+
+```mermaid
+graph LR
+    subgraph "单向 bind"
+        S1[source] -->|每次变化| T1[target]
+    end
+
+    subgraph "双向 bind2way"
+        S2[source] <-->|每次变化| T2[target]
+    end
+
+    subgraph "条件 bind_if"
+        S3[source] -->|guard 为真时| T3[target]
+        G3[guard] -.->|控制| S3
+    end
+
+    subgraph "一次 bind_once"
+        S4[source] -->|仅绑定时| T4[target]
+        S4 -.->|后续变化 ✗| T4
+    end
+```
+
+## 11. 整体依赖图
 
 ```mermaid
 graph TD
@@ -154,6 +270,8 @@ graph TD
         U1["ui.slider.value<br/>(INT)"]
         U2["ui.speedLabel.text<br/>(STRING)"]
         U3["ui.statusLed.on<br/>(BOOL)"]
+        U4["ui.tempLabel.text<br/>(STRING)"]
+        U5["ui.initValue.text<br/>(STRING)"]
         S1["state.pageName<br/>(STRING)"]
     end
 
@@ -175,12 +293,16 @@ graph TD
     P1 -->|lbs_bind| U2
     P1 <-->|lbs_bind2way| U1
     P3 -->|lbs_bind| U3
+    P2 -->|lbs_bind_if<br/>when P3| U4["ui.tempLabel.text<br/>(STRING)"]
+    P1 -->|lbs_bind_once<br/>(one-shot)| U5
 
     style P1 fill:#f96,stroke:#333
     style U1 fill:#f96,stroke:#333
     style U2 fill:#9cf,stroke:#333
     style U3 fill:#9f6,stroke:#333
     style P3 fill:#9f6,stroke:#333
+    style P2 fill:#ff9,stroke:#333
+    style U4 fill:#ff9,stroke:#333
 ```
 
 | 图例 | 含义 |
@@ -188,3 +310,5 @@ graph TD
 | 🟠 橙色 | 双向绑定节点（`<=>`） |
 | 🔵 蓝色 | 单向绑定 target（`<-`） |
 | 🟢 绿色 | 单向绑定 source → target |
+| 🟡 黄色 | 条件绑定（`when` 守卫） |
+| ⬜ 灰色 | 一次绑定（`once` 快照） |

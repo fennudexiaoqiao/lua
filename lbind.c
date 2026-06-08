@@ -40,6 +40,10 @@ static void free_binddecl_list (lua_State *L, LBS_BindDecl *list) {
       luaM_freearray(L, list->target->segments, list->target->sizenseg);
       luaM_free(L, list->target);
     }
+    if (list->condition != NULL) {
+      luaM_freearray(L, list->condition->segments, list->condition->sizenseg);
+      luaM_free(L, list->condition);
+    }
     luaM_free(L, list);
     list = next;
   }
@@ -135,6 +139,8 @@ LBS_BindDecl *lbsM_newbinddecl (lua_State *L) {
   b->trigger = NULL;
   b->debounce_value = 0;
   b->debounce_unit = NULL;
+  b->condition = NULL;
+  b->onetime = 0;
   b->line = 0;
   b->next = NULL;
   return b;
